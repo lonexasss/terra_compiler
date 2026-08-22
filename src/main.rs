@@ -21,8 +21,7 @@ fn is_uint(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
 }
 
-/// Escape a piece of terra text so it is safe inside a Rust string literal
-/// and does not act as a println! format directive.
+/// escape braces/quotes so println! doesn't eat them
 fn escape_text(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('"', "\\\"")
@@ -30,8 +29,7 @@ fn escape_text(text: &str) -> String {
         .replace('}', "}}")
 }
 
-/// Declare-or-reassign: the first mention of a variable emits `let mut`,
-/// every later mention emits a plain assignment.
+// first mention -> let mut, later ones just assign
 fn bind(name: &str, rhs: &str, declared: &mut HashSet<String>) -> String {
     if declared.insert(name.to_string()) {
         format!("    let mut {name}: i64 = {rhs};")
@@ -66,7 +64,7 @@ fn translate_in(name: &str, declared: &mut HashSet<String>) -> Result<String, St
 
 fn translate_log(operand: &str, declared: &HashSet<String>) -> Result<String, String> {
     if let Some(rest) = operand.strip_prefix('"') {
-        // string form(s): log."text" and log."text".var
+        // log."text" / log."text".x
         let close = rest
             .find('"')
             .ok_or_else(|| "unterminated string".to_string())?;
@@ -84,7 +82,6 @@ fn translate_log(operand: &str, declared: &HashSet<String>) -> Result<String, St
         require_declared(var, declared)?;
         Ok(format!(r#"    println!("{text}{{}}", {var});"#))
     } else if is_ident(operand) {
-        // value form: log.x
         require_declared(operand, declared)?;
         Ok(format!(r#"    println!("{{}}", {operand});"#))
     } else {
@@ -135,11 +132,10 @@ fn translate(
                 return Err(format!("missing operand for '{target}'"));
             }
             if is_uint(operand) {
-                // assignment of an integer literal
                 return Ok(bind(target, operand, declared));
             }
             if let Some(rest) = operand.strip_prefix(['+', '-', '*', '/']) {
-                // self-modification: x.+5, y.-2, z.*3, a./4
+                // x.+5, x.-2, ...
                 if !is_uint(rest) {
                     return Err(format!(
                         "bad arithmetic operand '{operand}' (expected +N, -N, *N or /N)"
@@ -150,7 +146,6 @@ fn translate(
                 return Ok(format!("    {target} = {target} {op} {rest};"));
             }
             if is_ident(operand) {
-                // copy from another variable
                 require_declared(operand, declared)?;
                 return Ok(bind(target, operand, declared));
             }
@@ -161,8 +156,7 @@ fn translate(
     }
 }
 
-/// Translate a whole program. Returns generated function body
-/// or a list of `line N: ...` diagnostics.
+// whole program -> rust body or "line N: ..." errors
 fn compile(source: &str) -> Result<String, Vec<String>> {
     let mut declared: HashSet<String> = HashSet::new();
     let mut body = String::new();

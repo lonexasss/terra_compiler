@@ -2,14 +2,12 @@
 
 A tiny transpiled scripting language. One-line programs compile to native Rust
 binaries: terra reads a `.tr` script, emits equivalent Rust, and hands it to
-`cargo`.
-
-No runtime, no VM — every script becomes real compiled code.
+`cargo`. No VM, no interpreter — the output is plain rust.
 
 ## the language
 
 Every line is `<verb>.<operand>`. Comments start with `#`.
-Variables are `i64`, dynamically typed-free by design.
+Values are integers (i64).
 
 | line | meaning |
 |---|---|
@@ -86,6 +84,3 @@ $ cargo run -- script.tr --emit-rust  # show generated rust only
 ```console
 $ cargo test
 ```
-
-21 unit tests cover translation of every command, escaping, mutability,
-and diagnostics.
