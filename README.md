@@ -1,4 +1,10 @@
-# terra
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=venom&height=160&color=0:0a0a0a,100:3a3a3a&text=terra&fontSize=70&fontColor=e6e6e6&fontAlignY=40&desc=.tr%20%E2%86%92%20rust%20%E2%86%92%20native%20binary&descAlignY=62&descSize=15&descColor=a8a8a8&animation=twinkling" width="100%" />
+
+<img src="https://github.com/lonexasss/terra_compiler/actions/workflows/ci.yml/badge.svg?style=flat-square" alt="ci status" />
+
+</div>
 
 A tiny transpiled scripting language. One-line programs compile to native Rust
 binaries: terra reads a `.tr` script, emits equivalent Rust, and hands it to
@@ -84,3 +90,9 @@ $ cargo run -- script.tr --emit-rust  # show generated rust only
 ```console
 $ cargo test
 ```
+
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&height=80&color=0:0a0a0a,100:3a3a3a&section=footer&animation=waving" width="100%" />
+
+</div>
