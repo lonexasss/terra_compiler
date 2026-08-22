@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="docs/logo.svg" width="480" alt="terra — .tr to rust to native binary" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg" />
+  <img src="docs/logo-light.svg" width="480" alt="terra — .tr to rust to native binary" />
+</picture>
 
 <p>
 <img src="https://github.com/lonexasss/terra_compiler/actions/workflows/ci.yml/badge.svg?style=flat-square" alt="ci status" />
