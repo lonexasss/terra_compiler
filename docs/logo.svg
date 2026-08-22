@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="132" viewBox="0 0 480 132">
+  <defs>
+    <clipPath id="wipe">
+      <rect x="120" y="0" height="100" width="0">
+        <animate attributeName="width" values="0;250" dur="2.2s" begin="0.3s" fill="freeze"/>
+      </rect>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#wipe)" font-family="monospace" font-size="13" fill="#8b949e" xml:space="preserve">
+    <text x="138" y="22"> ______ ____   ___  __  __ </text>
+    <text x="138" y="38">|_   _|  _ \ / _ \|  \/  |</text>
+    <text x="138" y="54">  | | | |_) | | | | |\/| |</text>
+    <text x="138" y="70">  | | |  _ &lt;| |_| | |  | |</text>
+    <text x="138" y="86">  |_| |_| \_\\___/|_|  |_|</text>
+  </g>
+
+  <!-- sweeping caret -->
+  <rect y="12" width="8" height="14" fill="#8b949e" x="128">
+    <animate attributeName="x" values="128;362" dur="2.2s" begin="0.3s" fill="freeze"/>
+    <animate attributeName="opacity" values="1;1;1;1;0;0" keyTimes="0;0.02;0.03;0.04;0.05;1" dur="2.7s" begin="0.3s" fill="freeze"/>
+  </rect>
+
+  <!-- resting blinking caret -->
+  <rect x="372" y="76" width="8" height="14" fill="#8b949e">
+    <animate attributeName="opacity" values="0;0;1;1" keyTimes="0;0.62;0.65;1" dur="3.2s" begin="0.3s" fill="freeze"/>
+    <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.5;0.5;1" dur="1.1s" begin="3.5s" repeatCount="indefinite"/>
+  </rect>
+
+  <text x="240" y="116" text-anchor="middle" font-family="monospace" font-size="13" fill="#b45f3f" opacity="0">.tr &#8594; rust &#8594; native binary
+    <animate attributeName="opacity" values="0;0;1;1" keyTimes="0;0.66;0.78;1" dur="3.2s" begin="0.3s" fill="freeze"/>
+  </text>
+</svg>

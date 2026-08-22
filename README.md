@@ -1,15 +1,6 @@
 <div align="center">
 
-```text
- ______ ____   ___  __  __ 
-|_   _|  _ \ / _ \|  \/  |
-  | | | |_) | | | | |\/| |
-  | | |  _ <| |_| | |  | |
-  |_| |_| \_\\___/|_|  |_|
-                          
-
-      .tr  ──▶  rust  ──▶  native binary
-```
+<img src="docs/logo.svg" width="480" alt="terra — .tr to rust to native binary" />
 
 <p>
 <img src="https://github.com/lonexasss/terra_compiler/actions/workflows/ci.yml/badge.svg?style=flat-square" alt="ci status" />
