@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="480" height="96" viewBox="0 0 480 96">
   <!-- dark variant -->
   <g font-family="monospace" font-weight="bold" font-size="54">
-    <text x="158" y="52" fill="#e6edf3">t<animate attributeName="opacity" values="0;1" begin="0.10s" dur="0.01s" fill="freeze"/></text>
-    <text x="191" y="52" fill="#e6edf3">e<animate attributeName="opacity" values="0;1" begin="0.30s" dur="0.01s" fill="freeze"/></text>
-    <text x="224" y="52" fill="#e6edf3">r<animate attributeName="opacity" values="0;1" begin="0.50s" dur="0.01s" fill="freeze"/></text>
-    <text x="257" y="52" fill="#e6edf3">r<animate attributeName="opacity" values="0;1" begin="0.70s" dur="0.01s" fill="freeze"/></text>
-    <text x="290" y="52" fill="#e6edf3">a<animate attributeName="opacity" values="0;1" begin="0.90s" dur="0.01s" fill="freeze"/></text>
+    <text x="158" y="52" fill="#e6edf3">T<animate attributeName="opacity" values="0;1" begin="0.10s" dur="0.01s" fill="freeze"/></text>
+    <text x="191" y="52" fill="#e6edf3">E<animate attributeName="opacity" values="0;1" begin="0.30s" dur="0.01s" fill="freeze"/></text>
+    <text x="224" y="52" fill="#e6edf3">R<animate attributeName="opacity" values="0;1" begin="0.50s" dur="0.01s" fill="freeze"/></text>
+    <text x="257" y="52" fill="#e6edf3">R<animate attributeName="opacity" values="0;1" begin="0.70s" dur="0.01s" fill="freeze"/></text>
+    <text x="290" y="52" fill="#e6edf3">A<animate attributeName="opacity" values="0;1" begin="0.90s" dur="0.01s" fill="freeze"/></text>
   </g>
 
   <rect x="323" y="16" width="26" height="42" fill="#e07a5f" opacity="0">
