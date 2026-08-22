@@ -1,8 +1,16 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=venom&height=160&color=0:0a0a0a,100:3a3a3a&text=terra&fontSize=70&fontColor=e6e6e6&fontAlignY=40&desc=.tr%20%E2%86%92%20rust%20%E2%86%92%20native%20binary&descAlignY=62&descSize=15&descColor=a8a8a8&animation=twinkling" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=waving&height=170&color=0:2b1810,50:8a4b2f,100:e07a5f&text=TERRA&fontSize=72&fontColor=f5ede6&fontAlignY=42&desc=.tr%20%E2%86%92%20rust%20%E2%86%92%20native%20binary&descAlignY=64&descSize=15&descColor=e0c4ae&animation=twinkling" width="100%" />
 
+<img src="https://readme-typing-svg.demolab.com?font=Noto+Sans+Mono&weight=600&size=18&duration=2800&pause=900&color=E07A5F&center=true&vCenter=true&width=480&lines=write+.tr;get+rust;run+native" alt="typing" />
+
+<p>
+<img src="https://img.shields.io/badge/rust-stable-dea584?style=flat-square" alt="rust" />
 <img src="https://github.com/lonexasss/terra_compiler/actions/workflows/ci.yml/badge.svg?style=flat-square" alt="ci status" />
+<img src="https://img.shields.io/badge/license-MIT-e07a5f?style=flat-square" alt="mit" />
+</p>
+
+<img src="https://images.unsplash.com/photo-1515879218367-8466d910aaa4?q=80&w=900&auto=format&fit=crop&sat=-100" width="620" alt="" />
 
 </div>
 
@@ -10,7 +18,7 @@ A tiny transpiled scripting language. One-line programs compile to native Rust
 binaries: terra reads a `.tr` script, emits equivalent Rust, and hands it to
 `cargo`. No VM, no interpreter — the output is plain rust.
 
-## the language
+## the grammar
 
 Every line is `<verb>.<operand>`. Comments start with `#`.
 Values are integers (i64).
@@ -29,31 +37,13 @@ Values are integers (i64).
 
 Reserved words: `log`, `in`, `w`, `q`. Negative literals: assign `0`, then subtract.
 
-## example
+## what you write / what you get
 
-```text
-# demo.tr
-log."enter a number:"
-in.x
-log."you typed ".x
-x.+15
-y.x
-y.*2
-log."doubled = ".y
-```
+| demo.tr | the rust cargo runs |
+|---|---|
+| ```text```<br>```log."enter a number:"```<br>```in.x```<br>```log."you typed ".x```<br>```x.+15```<br>```y.x```<br>```y.*2```<br>```log."doubled = ".y``` | ```rust```<br>```fn main() {```<br>&nbsp;&nbsp;&nbsp;&nbsp;```println!("enter a number:");```<br>&nbsp;&nbsp;&nbsp;&nbsp;```let mut x: i64 = /* stdin */ ;```<br>&nbsp;&nbsp;&nbsp;&nbsp;```println!("you typed {}", x);```<br>&nbsp;&nbsp;&nbsp;&nbsp;```x += 15;```<br>&nbsp;&nbsp;&nbsp;&nbsp;```let mut y: i64 = x;```<br>&nbsp;&nbsp;&nbsp;&nbsp;```y *= 2;```<br>&nbsp;&nbsp;&nbsp;&nbsp;```println!("doubled = {}", y);```<br>```}``` |
 
 ```console
-$ terra_compiler demo.tr --emit-rust
-fn main() {
-    println!("enter a number:");
-    let mut x: i64 = { /* stdin read + parse */ };
-    println!("you typed {}", x);
-    x = x + 15;
-    let mut y: i64 = x;
-    y = y * 2;
-    println!("doubled = {}", y);
-}
-
 $ terra_compiler demo.tr
 enter a number:
 7
@@ -93,6 +83,6 @@ $ cargo test
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&height=80&color=0:0a0a0a,100:3a3a3a&section=footer&animation=waving" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=waving&height=80&color=100:2b1810,50:8a4b2f,0:e07a5f&section=footer&animation=twinkling" width="100%" />
 
 </div>
