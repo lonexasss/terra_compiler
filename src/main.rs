@@ -5,19 +5,16 @@ use std::process::Command;
 fn translate_line(line: &str) -> String {
     let line = line.trim();
 
-    // Перевод log."текст" -> println!("текст");
     if line.starts_with("log.\"") && line.ends_with('"') {
         let text = &line[5..line.len() - 1];
         return format!("    println!(\"{}\");", text);
     }
 
-    // Перевод log.x -> println!("{}", x);
     if line.starts_with("log.") {
         let var_name = &line[4..];
         return format!("    println!(\"{{}}\", {});", var_name);
     }
 
-    // Перевод x.10 -> let x = 10;
     if line.contains('.') {
         let parts: Vec<&str> = line.split('.').collect();
         if parts.len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit()) {
