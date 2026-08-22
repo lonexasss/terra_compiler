@@ -23,6 +23,10 @@ A tiny transpiled scripting language. One-line programs compile to native Rust
 binaries: terra reads a `.tr` script, emits equivalent Rust, and hands it to
 `cargo`. No VM, no interpreter — the output is plain rust.
 
+<div align="center">
+<img src="docs/compile.svg" width="640" alt="a .tr program compiling to rust, line by line" />
+</div>
+
 ---
 
 ## synopsis
