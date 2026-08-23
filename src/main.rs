@@ -117,10 +117,26 @@ fn translate_in(name: &str, ctx: &mut Ctx) -> Result<String, String> {
 }
 
 fn read_int_expr() -> &'static str {
+    // keeps asking until it gets a whole number; a closed stdin ends
+    // the program cleanly instead of looping forever
     r#"{
-        let mut buf = String::new();
-        std::io::stdin().read_line(&mut buf).expect("input error");
-        buf.trim().parse().expect("invalid number")
+        use std::io::BufRead;
+        loop {
+            let mut __buf = String::new();
+            let __read = std::io::stdin().lock().read_line(&mut __buf).unwrap_or(0);
+            if __read == 0 {
+                eprintln!("terra: unexpected end of input");
+                std::process::exit(1);
+            }
+            match __buf.trim().parse::<i64>() {
+                Ok(__v) => break __v,
+                Err(_) => {
+                    use std::io::Write;
+                    print!("(a whole number, please) ");
+                    std::io::stdout().flush().ok();
+                }
+            }
+        }
     }"#
 }
 
@@ -178,6 +194,10 @@ fn translate_log(operand: &str, ctx: &Ctx) -> Result<String, String> {
 
 fn is_jump_verb(verb: &str) -> bool {
     verb == "j" || COND_OPS.iter().any(|(v, _)| *v == verb)
+}
+
+fn op_is_divide(operand: &str) -> bool {
+    operand.starts_with('/')
 }
 
 /// j.label / jeq.a.b.label family -> state machine moves
@@ -297,6 +317,9 @@ fn translate(
                     return Err(format!(
                         "bad arithmetic operand '{operand}' (expected +N, -N, *N or /N)"
                     ));
+                }
+                if op_is_divide(operand) && rest == "0" {
+                    return Err("division by zero".to_string());
                 }
                 let op = &operand[..1];
                 if op == "-" && !ctx.declared.contains(target) {
@@ -591,6 +614,20 @@ mod tests {
         let mut ctx = Ctx::new(false);
         translate("x.1", &mut ctx, &HashSet::new()).unwrap();
         assert!(t("x.+abc").unwrap_err().contains("bad arithmetic operand"));
+    }
+
+    #[test]
+    fn division_by_zero_is_compile_error() {
+        let mut ctx = Ctx::new(false);
+        translate("x.1", &mut ctx, &HashSet::new()).unwrap();
+        assert!(t("x./0").unwrap_err().contains("division by zero"));
+        assert!(t("y./0").unwrap_err().contains("division by zero"));
+    }
+
+    #[test]
+    fn reader_reprompts_instead_of_panic() {
+        assert!(read_int_expr().contains("a whole number, please"));
+        assert!(!read_int_expr().contains("expect("));
     }
 
     #[test]
