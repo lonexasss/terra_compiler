@@ -137,6 +137,40 @@ More under [examples/](examples/): `guess.tr` is a number-guessing game,
 `snake.tr` is a full snake — cursor positioning, single-key input, growing
 body, apples and two endings, in ~180 lines of pure terra.
 
+## a whole game
+
+A slice of `examples/snake.tr` — one frame of the main loop, exactly as
+it looks on screen:
+
+```text
+:frame
+cls.
+at.0.0."####################"
+at.9.0."####################"
+cy.1
+:sides
+at.cy.0."#"
+at.cy.19."#"
+cy.+1
+jlt.cy.9.sides
+at.ay.ax."@"          # the apple
+jgt.len.1.d0          # draw body only if it has grown that far
+j.n0
+:d0
+at.by0.bx0."o"
+:n0
+at.hy.hx."O"          # the head
+key.k.                # wait for one keypress...
+jeq.k.119.up          # w
+jeq.k.115.down        # s
+jeq.k.100.right       # d
+j.step                # anything else repeats the last move
+```
+
+No arrays, no functions, no variables-declarations — a ring buffer made of
+plain numbered variables, a state machine made of labels. That is the
+whole aesthetic.
+
 ## pipeline
 
 1. each line is validated against the grammar; undeclared variables are
