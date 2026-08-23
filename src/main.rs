@@ -206,7 +206,7 @@ fn translate_ask(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
         ));
     }
     Ok(format!(
-        "    print!(\"{text}\");\n{}",
+        "    print!(\"{text}\");\n    {{\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }}\n{}",
         ctx.bind(var, read_int_expr())
     ))
 }
@@ -297,12 +297,13 @@ fn translate_at(operand: &str, ctx: &Ctx) -> Result<String, String> {
         .and_then(|r| r.strip_suffix('"'))
         .ok_or_else(bad)?;
     let text = escape_text(text);
+    const FLUSH: &str = "\n    {\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }";
     if is_uint(row) && is_uint(col) {
-        Ok(format!(r#"    print!("\x1b[{row};{col}H{text}");"#))
+        Ok(format!(r#"    print!("\x1b[{row};{col}H{text}");{FLUSH}"#))
     } else {
         // variable rows/columns must be interpolated at run time
         Ok(format!(
-            r#"    print!("\x1b[{{}};{{}}H{text}", {row}, {col});"#
+            r#"    print!("\x1b[{{}};{{}}H{text}", {row}, {col});{FLUSH}"#
         ))
     }
 }
@@ -945,21 +946,31 @@ mod tests {
     #[test]
     fn at_positions_the_cursor() {
         let out = t("at.3.7.\"X\"").unwrap();
-        assert_eq!(out, "    print!(\"\\x1b[3;7HX\");");
+        assert_eq!(
+            out,
+            "    print!(\"\\x1b[3;7HX\");\n    {\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }"
+        );
 
         let mut ctx = Ctx::new(false);
         translate("r.1", &mut ctx, &HashSet::new()).unwrap();
         translate("c.2", &mut ctx, &HashSet::new()).unwrap();
         let out = translate("at.r.c.\"@\"", &mut ctx, &HashSet::new()).unwrap();
-        assert_eq!(out, "    print!(\"\\x1b[{};{}H@\", r, c);");
+        assert_eq!(
+            out,
+            "    print!(\"\\x1b[{};{}H@\", r, c);\n    {\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }"
+        );
         let out = translate("at.r.5.\"@\"", &mut ctx, &HashSet::new()).unwrap();
-        assert_eq!(out, "    print!(\"\\x1b[{};{}H@\", r, 5);");
+        assert!(out.contains("\"\\x1b[{};{}H@\", r, 5)"), "{out}");
+        assert!(out.contains("stdout().flush()"));
     }
 
     #[test]
     fn at_text_may_contain_dots() {
         let out = t("at.1.1.\"a.b.c\"").unwrap();
-        assert_eq!(out, "    print!(\"\\x1b[1;1Ha.b.c\");");
+        assert_eq!(
+            out,
+            "    print!(\"\\x1b[1;1Ha.b.c\");\n    {\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }"
+        );
     }
 
     #[test]
@@ -999,6 +1010,16 @@ mod tests {
     fn key_requires_trailing_dot() {
         assert!(t("key.k").unwrap_err().contains("trailing dot"));
         assert!(t("key.5.").unwrap_err().contains("not a variable name"));
+    }
+
+    // ---------- prompts flush immediately ----------
+
+    #[test]
+    fn ask_and_at_flush_stdout() {
+        let out = t("ask.\"n: \".x").unwrap();
+        assert!(out.contains("stdout().flush()"), "{out}");
+        let out = t("at.1.1.\"X\"").unwrap();
+        assert!(out.contains("stdout().flush()"), "{out}");
     }
 
     #[test]
