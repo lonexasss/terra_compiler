@@ -44,22 +44,35 @@ Values are integers (i64).
 | `x.+5` `x.-5` `x.*5` `x./5` `x.%5` | modify in place |
 | `x.+score` | the part after the sign may be a variable too |
 | `msg."text"` | string variables work too |
+| `s.+"more"` | append text to a string (`s.+other` appends another variable) |
+| `b.a` | copy a string or an integer variable |
 | `log.msg` | print a string variable |
 | `at.row.col."text"` | move the cursor and print (rows/columns may be variables) |
 | `key.k.` | wait for one keypress; k becomes its byte code || `log."text"` | print text |
 | `log.x` | print value |
 | `log."text".x` | print text followed by value |
 | `in.x` | read an integer from stdin |
-| `ask."text".x` | print prompt without newline, then read an integer into x |
+| `in.msg` | if msg is a string variable — read a whole line instead |
+| `ask."text".x` | prompt, then read an integer (or a line for string variables) |
 | `rnd.x.100` | x becomes a random whole number in 0..100 |
+| `len.n.msg` | n becomes the number of characters in msg |
+| `up.d.src` / `low.d.src` | d becomes src in upper / lower case |
+| `abs.d.x` | d becomes \|x\| |
+| `min.m.a.b` / `max.m.a.b` | m becomes the smaller / larger of two integers |
+| `now.t` | t becomes unix time in seconds |
+| `chr.s.65` | s becomes the character with code 65 |
+| `ord.k.msg` | k becomes the code of msg's first character (0 if empty) |
+| `bell.` | terminal beep |
 | `cls.` | clear the terminal (ANSI escape) |
 | `w.500` | sleep 500 ms |
 | `q.` | exit |
+| `q.3` | exit with code 3 |
 | `:name` | define a label |
 | `j.name` | jump to label |
-| `jeq.x.5.name` | jump if x == 5 — also `jne` `jlt` `jgt` `jle` `jge`; rhs may be a variable |
+| `jeq.x.5.name` | jump if x == 5 — also `jne` `jlt` `jgt` `jle` `jge`; rhs may be a variable or, for strings, `"text"` |
 
-Reserved words: `log`, `in`, `w`, `q`, `j`, `jeq`...`jge`.
+Reserved words: `log`, `in`, `w`, `q`, `j`, `jeq`...`jge`, `len`, `up`, `low`,
+`abs`, `min`, `max`, `now`, `bell`, `chr`, `ord`.
 Negative literals: `x.-5` declares -5 on a fresh variable, subtracts 5 from
 an existing one.
 

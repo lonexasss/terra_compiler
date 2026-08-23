@@ -8,9 +8,9 @@ const GENERATED_CARGO_TOML: &str =
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const RESERVED: [&str; 16] = [
+const RESERVED: [&str; 26] = [
     "log", "in", "w", "q", "j", "jeq", "jne", "jlt", "jgt", "jle", "jge", "ask", "rnd", "cls",
-    "at", "key",
+    "at", "key", "len", "up", "low", "abs", "min", "max", "now", "bell", "chr", "ord",
 ];
 
 const COND_OPS: [(&str, &str); 6] = [
@@ -109,21 +109,53 @@ impl Ctx {
         }
     }
 
-    /// same contract as bind, but for string variables
-    fn bind_str(&mut self, name: &str, quoted: &str) -> String {
+    /// same contract as bind, but for string variables; `expr` is any rust
+    /// expression evaluating to String
+    fn bind_str(&mut self, name: &str, expr: &str) -> String {
         if self.strs.insert(name.to_string()) {
             if self.machine {
-                self.hoisted
-                    .push(format!(
-                        "    #[allow(unused_variables)]\n    let mut {name}: String = String::new();"
-                    ));
+                self.hoisted.push(format!(
+                    "    #[allow(unused_variables)]\n    let mut {name}: String = String::new();"
+                ));
             } else {
                 return format!(
-                    "    #[allow(unused_variables)]\n    let mut {name}: String = {quoted}.to_string();"
+                    "    #[allow(unused_variables)]\n    let mut {name}: String = {expr};"
                 );
             }
         }
-        format!("    {name} = {quoted}.to_string();")
+        format!("    {name} = {expr};")
+    }
+
+    /// convenience wrapper: assign a quoted literal
+    fn bind_str_lit(&mut self, name: &str, quoted: &str) -> String {
+        self.bind_str(name, &format!("{quoted}.to_string()"))
+    }
+
+    /// declare `name` as a string if needed, then APPEND `val`
+    /// (a rust expression yielding &str/String) to it
+    fn append_str(&mut self, name: &str, val: &str) -> String {
+        if self.strs.insert(name.to_string()) {
+            if self.machine {
+                self.hoisted.push(format!(
+                    "    #[allow(unused_variables)]\n    let mut {name}: String = String::new();"
+                ));
+            } else {
+                return format!(
+                    "    #[allow(unused_variables)]\n    let mut {name}: String = String::new();\n    {name} += {val};"
+                );
+            }
+        }
+        format!("    {name} += {val};")
+    }
+
+    fn require_str(&self, name: &str) -> Result<(), String> {
+        if self.strs.contains(name) {
+            Ok(())
+        } else if self.ints.contains(name) {
+            Err(format!("'{name}' is an integer variable"))
+        } else {
+            Err(format!("unknown variable '{name}'"))
+        }
     }
 
     fn require_int(&self, name: &str) -> Result<(), String> {
@@ -146,14 +178,28 @@ impl Ctx {
     }
 }
 
+/// rust expression: read one raw line from stdin (no trailing newline);
+/// clean exit on EOF
+const READ_LINE_EXPR: &str = r#"{
+        use std::io::BufRead;
+        let mut __buf = String::new();
+        let __n = std::io::stdin().lock().read_line(&mut __buf).unwrap_or(0);
+        if __n == 0 {
+            eprintln!("terra: unexpected end of input");
+            std::process::exit(1);
+        }
+        while __buf.ends_with('\n') || __buf.ends_with('\r') {
+            __buf.pop();
+        }
+        __buf
+    }"#;
+
 fn translate_in(name: &str, ctx: &mut Ctx) -> Result<String, String> {
     if !is_ident(name) {
         return Err(format!("in expects a variable name, got '{name}'"));
     }
     if ctx.strs.contains(name) {
-        return Err(format!(
-            "'{name}' is a string variable, a number was expected"
-        ));
+        return Ok(ctx.bind_str(name, READ_LINE_EXPR));
     }
     let reader = read_int_expr();
     Ok(ctx.bind(name, reader))
@@ -201,9 +247,8 @@ fn translate_ask(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
         return Err(format!("'{var}' is not a variable name"));
     }
     if ctx.strs.contains(var) {
-        return Err(format!(
-            "'{var}' is a string variable, a number was expected"
-        ));
+        let bind = ctx.bind_str(var, READ_LINE_EXPR);
+        return Ok(format!("    print!(\"{text}\");\n    {{\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }}\n{bind}"));
     }
     Ok(format!(
         "    print!(\"{text}\");\n    {{\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }}\n{}",
@@ -366,30 +411,187 @@ fn translate_jump(
         .find(|(v, _)| *v == verb)
         .map(|(_, o)| *o)
         .unwrap();
-    let parts: Vec<&str> = operand.split('.').collect();
-    if parts.len() != 3 {
-        return Err(format!(
-            "{verb} expects '<var>.<value>.<label>', got '{operand}'"
-        ));
-    }
-    let (a, b, target) = (parts[0], parts[1], parts[2]);
+    let (a, rest) = operand
+        .split_once('.')
+        .ok_or_else(|| format!("{verb} expects '<var>.<value>.<label>', got '{operand}'"))?;
     if !is_ident(a) {
         return Err(format!("'{a}' is not a variable name"));
     }
-    ctx.require_int(a)?;
-    let b_expr = if is_uint(b) {
-        b.to_string()
-    } else if is_ident(b) {
-        ctx.require_int(b)?;
-        b.to_string()
+    // the compared value may be a quoted string whose text contains dots,
+    // e.g. jeq.msg."yes sir".over — so locate the label after the closing quote
+    let (b_expr, target) = if rest.starts_with('"') {
+        let close = quoted_end(rest).ok_or_else(|| {
+            format!("{verb}: unclosed string in '{operand}'")
+        })?;
+        let inner = &rest[1..close];
+        let label = rest[close + 1..]
+            .strip_prefix('.')
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                format!("{verb} expects '<var>.\"text\".<label>', got '{operand}'")
+            })?;
+        ctx.require_str(a)?;
+        (
+            format!("\"{}\"", escape_text(inner)),
+            label,
+        )
     } else {
-        return Err(format!("bad comparison operand '{b}' (number or variable expected)"));
+        let parts: Vec<&str> = rest.split('.').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "{verb} expects '<var>.<value>.<label>', got '{operand}'"
+            ));
+        }
+        let (b, target) = (parts[0], parts[1]);
+        let b_expr = if is_uint(b) {
+            ctx.require_int(a)?;
+            b.to_string()
+        } else if is_ident(b) {
+            if ctx.strs.contains(b) {
+                ctx.require_str(a)?;
+                b.to_string()
+            } else {
+                ctx.require_int(a)?;
+                ctx.require_int(b)?;
+                b.to_string()
+            }
+        } else {
+            return Err(format!(
+                "bad comparison operand '{b}' (number, variable or \"string\" expected)"
+            ));
+        };
+        (b_expr, target)
     };
     if !labels.contains(target) {
         return Err(format!("unknown label '{target}'"));
     }
     Ok(format!(
         "    if {a} {op} {b_expr} {{\n        __pc = \"{target}\";\n        continue '__run;\n    }}"
+    ))
+}
+
+/// index of the closing '"' for a string starting at `s[0]`,
+/// honoring \" escapes; None if unterminated
+fn quoted_end(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// rust expression: seconds since the unix epoch
+const NOW_EXPR: &str =
+    "{ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) }";
+
+fn args2<'a>(operand: &'a str, verb: &str) -> Result<(&'a str, &'a str), String> {
+    operand
+        .split_once('.')
+        .ok_or_else(|| format!("{verb} expects '<var>.<var>', got '{operand}'"))
+}
+
+fn args3<'a>(operand: &'a str, verb: &str) -> Result<(&'a str, &'a str, &'a str), String> {
+    let parts: Vec<&str> = operand.split('.').collect();
+    if parts.len() != 3 {
+        return Err(format!("{verb} expects three dot-separated parts, got '{operand}'"));
+    }
+    Ok((parts[0], parts[1], parts[2]))
+}
+
+fn require_idents(verb: &str, vs: &[&str], operand: &str) -> Result<(), String> {
+    if vs.iter().all(|v| is_ident(v)) {
+        Ok(())
+    } else {
+        Err(format!("{verb}: bad operands '{operand}'"))
+    }
+}
+
+fn translate_len(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let (n, s) = args2(operand, "len")?;
+    require_idents("len", &[n, s], operand)?;
+    ctx.require_str(s)?;
+    // chars, not bytes — cyrillic must count as one letter
+    Ok(ctx.bind(n, &format!("{s}.chars().count() as i64")))
+}
+
+fn translate_case(up: bool, operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let verb = if up { "up" } else { "low" };
+    let (d, s) = args2(operand, verb)?;
+    require_idents(verb, &[d, s], operand)?;
+    ctx.require_str(s)?;
+    if ctx.ints.contains(d) {
+        return Err(format!("'{d}' is an integer variable"));
+    }
+    let m = if up { "to_uppercase" } else { "to_lowercase" };
+    Ok(ctx.bind_str(d, &format!("{s}.{m}()")))
+}
+
+fn translate_abs(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let (d, x) = args2(operand, "abs")?;
+    require_idents("abs", &[d, x], operand)?;
+    ctx.require_int(x)?;
+    Ok(ctx.bind(d, &format!("{x}.abs()")))
+}
+
+fn translate_minmax(op: &str, operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let (m, a, b) = args3(operand, op)?;
+    require_idents(op, &[m, a, b], operand)?;
+    ctx.require_int(a)?;
+    ctx.require_int(b)?;
+    Ok(ctx.bind(m, &format!("{a}.{op}({b})")))
+}
+
+fn translate_now(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    if !is_ident(operand) {
+        return Err(format!("now expects a variable name, got '{operand}'"));
+    }
+    Ok(ctx.bind(operand, NOW_EXPR))
+}
+
+fn translate_bell() -> Result<String, String> {
+    Ok(
+        "    print!(\"\\u{7}\");\n    {\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }"
+            .to_string(),
+    )
+}
+
+fn translate_chr(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let (s, n) = args2(operand, "chr")?;
+    if !is_ident(s) || (!is_uint(n) && !is_ident(n)) {
+        return Err(format!("chr expects '<string-var>.<code>', got '{operand}'"));
+    }
+    if ctx.ints.contains(s) {
+        return Err(format!("'{s}' is an integer variable"));
+    }
+    let v = if is_uint(n) {
+        n.to_string()
+    } else {
+        ctx.require_int(n)?;
+        n.to_string()
+    };
+    Ok(ctx.bind_str(
+        s,
+        &format!(
+            "{{ (char::from_u32({v} as u32).unwrap_or('\\0')).to_string() }}"
+        ),
+    ))
+}
+
+fn translate_ord(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let (n, s) = args2(operand, "ord")?;
+    require_idents("ord", &[n, s], operand)?;
+    ctx.require_str(s)?;
+    Ok(ctx.bind(
+        n,
+        &format!("{s}.chars().next().map(|c| c as i64).unwrap_or(0)"),
     ))
 }
 
@@ -427,6 +629,15 @@ fn translate(
         "rnd" => translate_rnd(operand, ctx),
         "at" => translate_at(operand, ctx),
         "key" => translate_key(operand, ctx),
+        "len" => translate_len(operand, ctx),
+        "up" => translate_case(true, operand, ctx),
+        "low" => translate_case(false, operand, ctx),
+        "abs" => translate_abs(operand, ctx),
+        "min" | "max" => translate_minmax(verb, operand, ctx),
+        "now" => translate_now(operand, ctx),
+        "bell" => translate_bell(),
+        "chr" => translate_chr(operand, ctx),
+        "ord" => translate_ord(operand, ctx),
         "cls" => {
             if !operand.is_empty() {
                 return Err("cls takes no operand".to_string());
@@ -449,13 +660,20 @@ fn translate(
             ))
         }
         "q" => {
-            if !operand.is_empty() {
-                return Err("q takes no operand".to_string());
-            }
-            if ctx.machine {
-                Ok("    break '__run;".to_string())
+            if operand.is_empty() {
+                if ctx.machine {
+                    Ok("    break '__run;".to_string())
+                } else {
+                    Ok("    return;".to_string())
+                }
+            } else if is_uint(operand) && operand.len() <= 3 {
+                Ok(format!(
+                    "    {{\n        use std::io::Write;\n        std::io::stdout().flush().ok();\n    }}\n    std::process::exit({operand});"
+                ))
             } else {
-                Ok("    return;".to_string())
+                Err(format!(
+                    "q expects no operand or an exit code 0-255, got '{operand}'"
+                ))
             }
         }
         v if is_jump_verb(v) => translate_jump(v, operand, ctx, labels),
@@ -473,6 +691,22 @@ fn translate(
                 return Ok(ctx.bind(target, operand));
             }
             if let Some(rest) = operand.strip_prefix(['+', '-', '*', '/', '%']) {
+                // string concatenation first: s.+"more" or s.+other_str
+                let op = &operand[..1];
+                if rest.starts_with('"') || (is_ident(rest) && ctx.strs.contains(rest)) {
+                    if op != "+" {
+                        return Err("strings support only .+ (concatenation)".to_string());
+                    }
+                    if ctx.ints.contains(target) {
+                        return Err(format!("'{target}' is an integer variable"));
+                    }
+                    return if rest.starts_with('"') {
+                        let lit = quoted_literal(rest, "string")?;
+                        Ok(ctx.append_str(target, &lit))
+                    } else {
+                        Ok(ctx.append_str(target, &format!("&{rest}")))
+                    };
+                }
                 // x.+5, x.-2, x.+score, ... modify in place; the part after
                 // the sign may be a literal or another variable.
                 // x.-N on a fresh variable declares a negative literal instead
@@ -503,7 +737,7 @@ fn translate(
                     return Err(format!("'{target}' is an integer variable"));
                 }
                 let lit = quoted_literal(operand, "string")?;
-                return Ok(ctx.bind_str(target, &lit));
+                return Ok(ctx.bind_str_lit(target, &lit));
             }
             if ctx.strs.contains(target) {
                 return Err(format!(
@@ -511,6 +745,12 @@ fn translate(
                 ));
             }
             if is_ident(operand) {
+                if ctx.strs.contains(operand) {
+                    if ctx.ints.contains(target) {
+                        return Err(format!("'{target}' is an integer variable"));
+                    }
+                    return Ok(ctx.bind_str(target, &format!("{operand}.clone()")));
+                }
                 ctx.require_int(operand)?;
                 return Ok(ctx.bind(target, operand));
             }
@@ -631,10 +871,14 @@ fn compile(source: &str) -> Result<String, Vec<String>> {
             body.push_str(&indent_block(stmt, 12));
             body.push('\n');
         }
-        // if the segment already exits (q. or trailing jump), no fallthrough
+        // if the segment already exits (q., q.N or trailing jump), no fallthrough
         let exits = segments[idx]
             .last()
-            .map(|s| s.trim_end().ends_with("continue '__run;") || s.contains("break '__run;"))
+            .map(|s| {
+                s.trim_end().ends_with("continue '__run;")
+                    || s.contains("break '__run;")
+                    || s.contains("std::process::exit(")
+            })
             .unwrap_or(false);
         if !exits {
             if idx + 1 < seg_ids.len() {
@@ -914,22 +1158,24 @@ mod tests {
         translate("n.1", &mut ctx, &HashSet::new()).unwrap();
         assert!(translate("n.msg", &mut ctx, &HashSet::new())
             .unwrap_err()
-            .contains("'msg' is a string variable"));
+            .contains("'n' is an integer variable"));
         assert!(translate("n.+msg", &mut ctx, &HashSet::new())
             .unwrap_err()
-            .contains("'msg' is a string variable"));
+            .contains("'n' is an integer variable"));
         assert!(translate("in.msg", &mut ctx, &HashSet::new())
-            .unwrap_err()
-            .contains("'msg' is a string variable"));
+            .unwrap()
+            .contains("read_line"));
         assert!(translate("rnd.msg.5", &mut ctx, &HashSet::new())
             .unwrap_err()
             .contains("'msg' is a string variable"));
         assert!(translate("msg.n", &mut ctx, &HashSet::new())
             .unwrap_err()
             .contains("'msg' is a string variable"));
-        assert!(translate("jeq.msg.\"x\".l", &mut ctx, &HashSet::new(),)
+        // comparing an int variable against a quoted string is rejected
+        translate("nq.7", &mut ctx, &HashSet::new()).unwrap();
+        assert!(translate("jeq.nq.\"7\".l", &mut ctx, &HashSet::new())
             .unwrap_err()
-            .contains("string variable"));
+            .contains("'nq' is an integer variable"));
     }
 
     #[test]
@@ -1087,7 +1333,178 @@ mod tests {
     #[test]
     fn quit_command() {
         assert_eq!(t("q.").unwrap(), "    return;");
-        assert!(t("q.42").unwrap_err().contains("takes no operand"));
+        assert!(t("q.42").unwrap().contains("exit(42)"));
+        assert!(t("q.abc").unwrap_err().contains("exit code"));
+    }
+
+    #[test]
+    fn string_input_reads_line() {
+        let mut ctx = Ctx::new(false);
+        translate("msg.\"\"", &mut ctx, &HashSet::new()).unwrap();
+        let out = translate("in.msg", &mut ctx, &HashSet::new()).unwrap();
+        assert!(out.contains("read_line"));
+        assert!(out.contains("__buf"));
+        // fresh names keep numeric input
+        assert!(!translate("in.age", &mut ctx, &HashSet::new())
+            .unwrap()
+            .contains("ends_with"));
+    }
+
+    #[test]
+    fn ask_prompt_for_string_var() {
+        let mut ctx = Ctx::new(false);
+        translate("name.\"anon\"", &mut ctx, &HashSet::new()).unwrap();
+        let out = translate("ask.\"who? \".name", &mut ctx, &HashSet::new()).unwrap();
+        assert!(out.contains("who? "));
+        assert!(out.contains("read_line"));
+    }
+
+    #[test]
+    fn conditions_compare_strings() {
+        let labels = HashSet::from(["over".to_string()]);
+        let mut ctx = Ctx::new(true);
+        translate("msg.\"yes\"", &mut ctx, &labels).unwrap();
+        assert!(
+            translate("jeq.msg.\"yes\".over", &mut ctx, &labels)
+                .unwrap()
+                .contains("if msg == \"yes\"")
+        );
+        assert!(
+            translate("jne.msg.\"no\".over", &mut ctx, &labels)
+                .unwrap()
+                .contains("if msg != \"no\"")
+        );
+        // dots inside the literal don't break label parsing
+        assert!(
+            translate("jeq.msg.\"a.b\".over", &mut ctx, &labels)
+                .unwrap()
+                .contains("__pc = \"over\"")
+        );
+        assert!(translate("jeq.msg.\"oops.over", &mut ctx, &labels)
+            .unwrap_err()
+            .contains("unclosed"));
+        // string vs string variable
+        translate("want.\"yes\"", &mut ctx, &labels).unwrap();
+        assert!(
+            translate("jeq.msg.want.over", &mut ctx, &labels)
+                .unwrap()
+                .contains("if msg == want")
+        );
+        // mixed types are rejected
+        translate("n5.5", &mut ctx, &labels).unwrap();
+        assert!(
+            translate("jeq.n5.\"5\".over", &mut ctx, &labels)
+                .unwrap_err()
+                .contains("'n5' is an integer variable")
+        );
+        assert!(
+            translate("jeq.msg.n5.over", &mut ctx, &labels)
+                .unwrap_err()
+                .contains("'msg' is a string variable")
+        );
+    }
+
+    #[test]
+    fn string_concat() {
+        let mut ctx = Ctx::new(false);
+        translate("s.\"a\"", &mut ctx, &HashSet::new()).unwrap();
+        assert_eq!(
+            translate("s.+\"b\"", &mut ctx, &HashSet::new()).unwrap(),
+            "    s += \"b\";"
+        );
+        translate("t2.\"x\"", &mut ctx, &HashSet::new()).unwrap();
+        assert_eq!(
+            translate("s.+t2", &mut ctx, &HashSet::new()).unwrap(),
+            "    s += &t2;"
+        );
+        // fresh target becomes a new string variable
+        let out = translate("u2.+s", &mut ctx, &HashSet::new()).unwrap();
+        assert!(out.contains("let mut u2: String = String::new()"));
+        assert!(out.contains("u2 += &s"));
+        // only + is defined for strings
+        assert!(translate("s.-\"z\"", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("only .+"));
+    }
+
+    #[test]
+    fn copy_string_variable() {
+        let mut ctx = Ctx::new(false);
+        translate("greet.\"hi\"", &mut ctx, &HashSet::new()).unwrap();
+        assert!(
+            translate("b2.greet", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("let mut b2: String = greet.clone()")
+        );
+        translate("num7.7", &mut ctx, &HashSet::new()).unwrap();
+        assert!(translate("num7.greet", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("'num7' is an integer variable"));
+    }
+
+    #[test]
+    fn string_helper_verbs() {
+        let mut ctx = Ctx::new(false);
+        translate("s.\"abc\"", &mut ctx, &HashSet::new()).unwrap();
+        let out = translate("len.n2.s", &mut ctx, &HashSet::new()).unwrap();
+        assert!(out.contains("s.chars().count() as i64"));
+        assert!(
+            translate("up.upd.s", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("s.to_uppercase()")
+        );
+        assert!(
+            translate("low.lod.s", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("s.to_lowercase()")
+        );
+        assert!(
+            translate("chr.ch.65", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("from_u32(65 as u32)")
+        );
+        assert!(
+            translate("ord.od.s", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("s.chars().next()")
+        );
+        // chr refuses an integer target
+        translate("i9.9", &mut ctx, &HashSet::new()).unwrap();
+        assert!(translate("chr.i9.65", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("'i9' is an integer variable"));
+    }
+
+    #[test]
+    fn int_helper_verbs() {
+        let mut ctx = Ctx::new(false);
+        translate("x9.-3", &mut ctx, &HashSet::new()).unwrap();
+        assert!(
+            translate("abs.ad.x9", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("x9.abs()")
+        );
+        translate("a9.1", &mut ctx, &HashSet::new()).unwrap();
+        translate("b9.2", &mut ctx, &HashSet::new()).unwrap();
+        assert!(
+            translate("min.mn.a9.b9", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("a9.min(b9)")
+        );
+        assert!(
+            translate("max.mx.a9.b9", &mut ctx, &HashSet::new())
+                .unwrap()
+                .contains("a9.max(b9)")
+        );
+        assert!(
+            t_machine("now.ts").contains("UNIX_EPOCH")
+        );
+        assert!(t_machine("bell.").contains("\\u{7}"));
+        // reserved words are parsed as commands first
+        assert!(t("len.5").unwrap_err().contains("len expects"));
+        assert!(t("now.5")
+            .unwrap_err()
+            .contains("now expects a variable name"));
     }
 
     #[test]

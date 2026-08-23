@@ -1,6 +1,11 @@
 [package]
 name = "terra_compiler"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
+description = "The terra programming language: a tiny goto-based language that compiles to rust. Terminal games in minutes."
+license = "MIT"
+repository = "https://github.com/lonexasss/terra_compiler"
+keywords = ["language", "compiler", "transpiler", "terminal", "education"]
+categories = ["compilers", "command-line-utilities"]
 
 [dependencies]
