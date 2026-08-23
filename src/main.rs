@@ -422,6 +422,24 @@ fn compile(source: &str) -> Result<String, Vec<String>> {
     Ok(body)
 }
 
+/// eval mode: ';' separates statements when there are no newlines
+/// (';' inside string literals stays untouched)
+fn split_statements(program: &str) -> String {
+    let mut out = String::new();
+    let mut in_string = false;
+    for c in program.chars() {
+        match c {
+            '"' => {
+                in_string = !in_string;
+                out.push(c);
+            }
+            ';' if !in_string => out.push('\n'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|a| a == "-V" || a == "--version") {
@@ -431,17 +449,31 @@ fn main() {
     if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
         eprintln!("terra compiler {VERSION}");
         eprintln!("usage: terra_compiler <script.tr> [--emit-rust]");
+        eprintln!("       terra_compiler -e 'x.6; log.\"six = \".x; q.'");
         eprintln!("  --emit-rust   print generated rust instead of running it");
+        eprintln!("  -e <program>  run a one-liner right on the command line");
         exit(if args.len() < 2 { 1 } else { 0 });
     }
 
-    let path = &args[1];
     let emit_only = args.iter().any(|a| a == "--emit-rust");
 
-    let content = fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("terra: cannot read '{path}': {e}");
-        exit(1);
-    });
+    // -e takes the next argument as the whole program
+    let content = if let Some(pos) = args.iter().position(|a| a == "-e") {
+        match args.get(pos + 1) {
+            Some(program) => split_statements(program),
+            None => {
+                eprintln!("terra: -e expects a program string");
+                exit(1);
+            }
+        }
+    } else {
+        let path = &args[1];
+        fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("terra: cannot read '{path}': {e}");
+            eprintln!("       (tip: for one-liners use  terra_compiler -e 'x.10; log.x; q.')");
+            exit(1);
+        })
+    };
 
     let body = match compile(&content) {
         Ok(b) => b,
@@ -707,6 +739,15 @@ mod tests {
         assert_eq!(errs.len(), 2);
         assert!(errs[0].starts_with("line 2:"));
         assert!(errs[1].starts_with("line 3:"));
+    }
+
+    #[test]
+    fn eval_mode_splits_on_semicolons_but_not_in_strings() {
+        assert_eq!(
+            split_statements("x.10; log.\"a;b\".x; q."),
+            "x.10\n log.\"a;b\".x\n q."
+        );
+        // leading spaces are fine: every line is trimmed before translation
     }
 
     #[test]
