@@ -200,12 +200,25 @@ fn translate_jump(
     ))
 }
 
+/// cut a trailing '# ...' comment, but only outside string literals
+fn strip_comment(line: &str) -> &str {
+    let mut in_string = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => in_string = !in_string,
+            '#' if !in_string => return &line[..i],
+            _ => {}
+        }
+    }
+    line
+}
+
 fn translate(
     raw: &str,
     ctx: &mut Ctx,
     labels: &HashSet<String>,
 ) -> Result<String, String> {
-    let line = raw.trim();
+    let line = strip_comment(raw.trim()).trim_end();
     if line.is_empty() || line.starts_with('#') {
         return Ok(String::new());
     }
@@ -306,7 +319,7 @@ fn compile(source: &str) -> Result<String, Vec<String>> {
     let mut errors: Vec<String> = Vec::new();
 
     for (idx, raw_line) in raw.iter().enumerate() {
-        let line = raw_line.trim();
+        let line = strip_comment(raw_line.trim()).trim_end();
         if let Some(name) = line.strip_prefix(':') {
             if !is_ident(name) {
                 errors.push(format!("line {}: bad label '{line}'", idx + 1));
@@ -441,7 +454,8 @@ fn main() {
         }
     };
 
-    let rust_code = format!("#[allow(unused_assignments)]\nfn main() {{\n{body}}}\n");
+    let rust_code =
+        format!("#[allow(unused_assignments, unused_mut)]\nfn main() {{\n{body}}}\n");
 
     if emit_only {
         print!("{rust_code}");
@@ -589,6 +603,20 @@ mod tests {
         assert_eq!(t("# note").unwrap(), "");
         assert_eq!(t("").unwrap(), "");
         assert_eq!(t("   ").unwrap(), "");
+    }
+
+    #[test]
+    fn inline_comments_are_stripped_but_not_inside_strings() {
+        let mut ctx = Ctx::new(false);
+        assert_eq!(
+            translate("x.10 # ten", &mut ctx, &HashSet::new()).unwrap(),
+            "    let mut x: i64 = 10;"
+        );
+        // '#' inside quotes is content, not a comment
+        assert_eq!(
+            translate(r##"log."#1 winner""##, &mut ctx, &HashSet::new()).unwrap(),
+            r##"    println!("#1 winner");"##
+        );
     }
 
     #[test]

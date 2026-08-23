@@ -1,0 +1,8 @@
+# countdown.tr — loops and backward jumps
+i.3
+:top
+log."t minus ".i
+i.-1
+jgt.i.0.top      # while i > 0, go back to :top
+log."liftoff"
+q.

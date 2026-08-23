@@ -1,0 +1,15 @@
+# guess.tr — guess the number. shows input, comparisons, branches
+secret.42
+:start
+log."guess the number:"
+in.guess
+jeq.guess.secret.win
+jlt.guess.secret.low
+log."lower..."
+j.start
+:low
+log."higher..."
+j.start
+:win
+log."correct! you got it"
+q.
