@@ -95,7 +95,9 @@ impl Ctx {
                         }
                     }
                     None => {
-                        self.hoisted.push(format!("    let mut {name}: i64 = 0;"));
+                        self.hoisted.push(
+                            format!("    #[allow(unused_variables)]\n    let mut {name}: i64 = 0;"),
+                        );
                         format!("    {name} = {rhs};")
                     }
                 }
@@ -295,7 +297,14 @@ fn translate_at(operand: &str, ctx: &Ctx) -> Result<String, String> {
         .and_then(|r| r.strip_suffix('"'))
         .ok_or_else(bad)?;
     let text = escape_text(text);
-    Ok(format!(r#"    print!("\x1b[{row};{col}H{text}");"#))
+    if is_uint(row) && is_uint(col) {
+        Ok(format!(r#"    print!("\x1b[{row};{col}H{text}");"#))
+    } else {
+        // variable rows/columns must be interpolated at run time
+        Ok(format!(
+            r#"    print!("\x1b[{{}};{{}}H{text}", {row}, {col});"#
+        ))
+    }
 }
 
 /// parse a fully-quoted string operand into its escaped rust literal
@@ -942,7 +951,9 @@ mod tests {
         translate("r.1", &mut ctx, &HashSet::new()).unwrap();
         translate("c.2", &mut ctx, &HashSet::new()).unwrap();
         let out = translate("at.r.c.\"@\"", &mut ctx, &HashSet::new()).unwrap();
-        assert_eq!(out, "    print!(\"\\x1b[r;cH@\");");
+        assert_eq!(out, "    print!(\"\\x1b[{};{}H@\", r, c);");
+        let out = translate("at.r.5.\"@\"", &mut ctx, &HashSet::new()).unwrap();
+        assert_eq!(out, "    print!(\"\\x1b[{};{}H@\", r, 5);");
     }
 
     #[test]

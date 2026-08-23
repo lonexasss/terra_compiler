@@ -46,8 +46,7 @@ Values are integers (i64).
 | `msg."text"` | string variables work too |
 | `log.msg` | print a string variable |
 | `at.row.col."text"` | move the cursor and print (rows/columns may be variables) |
-| `key.k.` | wait for one keypress; k becomes its byte code |
-| `log."text"` | print text |
+| `key.k.` | wait for one keypress; k becomes its byte code || `log."text"` | print text |
 | `log.x` | print value |
 | `log."text".x` | print text followed by value |
 | `in.x` | read an integer from stdin |
@@ -133,6 +132,10 @@ t minus 2
 t minus 1
 liftoff
 ```
+
+More under [examples/](examples/): `guess.tr` is a number-guessing game,
+`snake.tr` is a full snake — cursor positioning, single-key input, growing
+body, apples and two endings, in ~180 lines of pure terra.
 
 ## pipeline
 
