@@ -41,12 +41,15 @@ Values are integers (i64).
 |---|---|
 | `x.10` | assign an integer (declares on first use) |
 | `x.y` | copy another variable |
-| `x.+5` `x.-5` `x.*5` `x./5` | modify in place |
+| `x.+5` `x.-5` `x.*5` `x./5` `x.%5` | modify in place |
+| `x.+score` | the part after the sign may be a variable too |
 | `log."text"` | print text |
 | `log.x` | print value |
 | `log."text".x` | print text followed by value |
 | `in.x` | read an integer from stdin |
 | `ask."text".x` | print prompt without newline, then read an integer into x |
+| `rnd.x.100` | x becomes a random whole number in 0..100 |
+| `cls.` | clear the terminal (ANSI escape) |
 | `w.500` | sleep 500 ms |
 | `q.` | exit |
 | `:name` | define a label |

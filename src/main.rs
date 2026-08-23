@@ -8,8 +8,8 @@ const GENERATED_CARGO_TOML: &str =
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const RESERVED: [&str; 12] = [
-    "log", "in", "w", "q", "j", "jeq", "jne", "jlt", "jgt", "jle", "jge", "ask",
+const RESERVED: [&str; 14] = [
+    "log", "in", "w", "q", "j", "jeq", "jne", "jlt", "jgt", "jle", "jge", "ask", "rnd", "cls",
 ];
 
 const COND_OPS: [(&str, &str); 6] = [
@@ -54,6 +54,7 @@ fn escape_text(text: &str) -> String {
 
 /// translation state: which variables exist, whether we generate the
 /// flat body (linear mode) or hoist declarations for the state machine
+#[derive(Clone)]
 struct Ctx {
     declared: HashSet<String>,
     machine: bool,
@@ -196,8 +197,28 @@ fn is_jump_verb(verb: &str) -> bool {
     verb == "j" || COND_OPS.iter().any(|(v, _)| *v == verb)
 }
 
-fn op_is_divide(operand: &str) -> bool {
-    operand.starts_with('/')
+/// rnd.x.50 -> x becomes a random whole number in 0..50.
+/// seeded from the clock nanos with an xor-shift; plenty for games.
+fn translate_rnd(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let parts: Vec<&str> = operand.split('.').collect();
+    if parts.len() != 2 {
+        return Err(format!("rnd expects '<var>.<limit>', got '{operand}'"));
+    }
+    let (var, limit) = (parts[0], parts[1]);
+    if !is_ident(var) {
+        return Err(format!("'{var}' is not a variable name"));
+    }
+    if !is_uint(limit) {
+        return Err(format!("bad limit '{limit}' (whole number expected)"));
+    }
+    let expr = format!(
+        r#"{{
+            use std::time::{{SystemTime, UNIX_EPOCH}};
+            let __n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos() as u64).unwrap_or(0);
+            ((__n ^ (__n << 13) ^ (__n >> 7)) % {limit}.max(1)) as i64
+        }}"#
+    );
+    Ok(ctx.bind(var, &expr))
 }
 
 /// j.label / jeq.a.b.label family -> state machine moves
@@ -278,6 +299,20 @@ fn translate(
         "log" => translate_log(operand, ctx),
         "in" => translate_in(operand, ctx),
         "ask" => translate_ask(operand, ctx),
+        "rnd" => translate_rnd(operand, ctx),
+        "cls" => {
+            if !operand.is_empty() {
+                return Err("cls takes no operand".to_string());
+            }
+            Ok(
+                r#"    print!("\x1b[2J\x1b[H");
+    {
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+    }"#
+                .to_string(),
+            )
+        }
         "w" => {
             if !is_uint(operand) {
                 return Err(format!("w expects milliseconds, got '{operand}'"));
@@ -310,23 +345,30 @@ fn translate(
             if is_uint(operand) {
                 return Ok(ctx.bind(target, operand));
             }
-            if let Some(rest) = operand.strip_prefix(['+', '-', '*', '/']) {
-                // x.+5, x.-2, ... modify in place; x.-5 on a fresh variable
-                // declares it as a negative literal instead
-                if !is_uint(rest) {
+            if let Some(rest) = operand.strip_prefix(['+', '-', '*', '/', '%']) {
+                // x.+5, x.-2, x.+score, ... modify in place; the part after
+                // the sign may be a literal or another variable.
+                // x.-N on a fresh variable declares a negative literal instead
+                if !is_uint(rest) && !is_ident(rest) {
                     return Err(format!(
-                        "bad arithmetic operand '{operand}' (expected +N, -N, *N or /N)"
+                        "bad arithmetic operand '{operand}' (expected +N/-N/*N//N/%N or +var)"
                     ));
                 }
-                if op_is_divide(operand) && rest == "0" {
-                    return Err("division by zero".to_string());
-                }
                 let op = &operand[..1];
-                if op == "-" && !ctx.declared.contains(target) {
+                if (op == "/" || op == "%") && rest == "0" {
+                    return Err(format!("division by zero ({op}0)"));
+                }
+                if op == "-" && is_uint(rest) && !ctx.declared.contains(target) {
                     return Ok(ctx.bind(target, &format!("-{rest}")));
                 }
+                let rhs = if is_uint(rest) {
+                    rest.to_string()
+                } else {
+                    ctx.require_declared(rest)?;
+                    rest.to_string()
+                };
                 ctx.require_declared(target)?;
-                return Ok(format!("    {target} = {target} {op} {rest};"));
+                return Ok(format!("    {target} = {target} {op} {rhs};"));
             }
             if is_ident(operand) {
                 ctx.require_declared(operand)?;
@@ -613,7 +655,8 @@ mod tests {
     fn bad_arithmetic_operand() {
         let mut ctx = Ctx::new(false);
         translate("x.1", &mut ctx, &HashSet::new()).unwrap();
-        assert!(t("x.+abc").unwrap_err().contains("bad arithmetic operand"));
+        // 'abc' would be a valid variable name; this is genuinely malformed
+        assert!(t("x.+ab!c").unwrap_err().contains("bad arithmetic operand"));
     }
 
     #[test]
@@ -622,6 +665,70 @@ mod tests {
         translate("x.1", &mut ctx, &HashSet::new()).unwrap();
         assert!(t("x./0").unwrap_err().contains("division by zero"));
         assert!(t("y./0").unwrap_err().contains("division by zero"));
+    }
+
+    // ---------- variable arithmetic ----------
+
+    #[test]
+    fn in_place_ops_accept_variables() {
+        let mut ctx = declared_ctx();
+        for (line, expected) in [
+            ("i.+k", "    i = i + k;"),
+            ("i.-k", "    i = i - k;"),
+            ("i.*k", "    i = i * k;"),
+            ("i./k", "    i = i / k;"),
+            ("i.%k", "    i = i % k;"),
+        ] {
+            let out = translate(line, &mut ctx.clone(), &HashSet::new()).unwrap();
+            assert_eq!(out, expected, "{line}");
+        }
+    }
+
+    #[test]
+    fn in_place_var_rhs_must_be_declared() {
+        let mut ctx = Ctx::new(false);
+        translate("i.1", &mut ctx, &HashSet::new()).unwrap();
+        assert!(t("i.+nope").unwrap_err().contains("unknown variable 'nope'"));
+    }
+
+    #[test]
+    fn modulo_by_zero_is_compile_error() {
+        let mut ctx = Ctx::new(false);
+        translate("x.1", &mut ctx, &HashSet::new()).unwrap();
+        assert!(t("x.%0").unwrap_err().contains("division by zero"));
+    }
+
+    // ---------- rnd and cls ----------
+
+    #[test]
+    fn rnd_declares_and_uses_modulo_range() {
+        let out = t("rnd.x.50").unwrap();
+        assert!(out.contains("let mut x: i64"), "{out}");
+        assert!(out.contains("% 50.max(1)"), "{out}");
+    }
+
+    #[test]
+    fn rnd_reuses_existing_variable() {
+        let mut ctx = Ctx::new(false);
+        translate("rnd.x.10", &mut ctx, &HashSet::new()).unwrap();
+        let out = translate("rnd.x.20", &mut ctx, &HashSet::new()).unwrap();
+        assert!(out.starts_with("    x = "), "{out}");
+        assert!(out.contains("% 20.max(1)"));
+    }
+
+    #[test]
+    fn rnd_bad_shapes_are_errors() {
+        assert!(t("rnd.x").unwrap_err().contains("'<var>.<limit>'"));
+        assert!(t("rnd.x.a").unwrap_err().contains("bad limit"));
+        assert!(t("rnd.5.10").unwrap_err().contains("not a variable name"));
+    }
+
+    #[test]
+    fn cls_clears_screen_with_ansi() {
+        let out = t("cls.").unwrap();
+        assert!(out.contains("\\x1b[2J"));
+        assert!(out.contains("flush"));
+        assert!(t("cls.5").unwrap_err().contains("takes no operand"));
     }
 
     #[test]
