@@ -1,0 +1,42 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            archive: tar.gz
+          - os: macos-14
+            name: macos-arm64
+            archive: tar.gz
+          - os: windows-latest
+            name: windows-x64
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo build --release
+      - name: pack (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          cd target/release
+          tar czf ../../terra_compiler-${{ matrix.name }}.tar.gz terra_compiler
+      - name: pack (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/release/terra_compiler.exe `
+            -DestinationPath terra_compiler-${{ matrix.name }}.zip
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: terra_compiler-*
