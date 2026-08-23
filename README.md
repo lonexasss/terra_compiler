@@ -47,8 +47,13 @@ Values are integers (i64).
 | `in.x` | read an integer from stdin |
 | `w.500` | sleep 500 ms |
 | `q.` | exit |
+| `:name` | define a label |
+| `j.name` | jump to label |
+| `jeq.x.5.name` | jump if x == 5 — also `jne` `jlt` `jgt` `jle` `jge`; rhs may be a variable |
 
-Reserved words: `log`, `in`, `w`, `q`. Negative literals: assign `0`, then subtract.
+Reserved words: `log`, `in`, `w`, `q`, `j`, `jeq`...`jge`.
+Negative literals: `x.-5` declares -5 on a fresh variable, subtracts 5 from
+an existing one.
 
 ## example
 
@@ -94,6 +99,30 @@ $ terra_compiler bad.tr
 terra: error: line 1: missing operand for 'z'
 terra: error: line 2: unknown variable 'zz'
 terra: 2 error(s), nothing built
+```
+
+## loops
+
+Labels and conditional jumps compile to a state machine, so backward
+jumps just work — this is a full countdown:
+
+```text
+# countdown.tr
+i.3
+:top
+log."t minus ".i
+i.-1
+jgt.i.0.top      # while i > 0 go back to :top
+log."liftoff"
+q.
+```
+
+```console
+$ terra_compiler countdown.tr
+t minus 3
+t minus 2
+t minus 1
+liftoff
 ```
 
 ## pipeline
