@@ -338,7 +338,7 @@ fn indent_block(code: &str, spaces: usize) -> String {
 /// labeled loop, each label becomes a match arm, jumps move __pc.
 /// backward jumps work because nothing depends on textual position.
 fn compile(source: &str) -> Result<String, Vec<String>> {
-    let raw: Vec<&str> = source.lines().collect();
+    let statements = split_statements(source);
 
     // pass one: labels, duplicates, flow detection
     let mut labels: HashSet<String> = HashSet::new();
@@ -346,13 +346,13 @@ fn compile(source: &str) -> Result<String, Vec<String>> {
     let mut has_flow = false;
     let mut errors: Vec<String> = Vec::new();
 
-    for (idx, raw_line) in raw.iter().enumerate() {
-        let line = strip_comment(raw_line.trim()).trim_end();
+    for (no, text) in &statements {
+        let line = text.trim();
         if let Some(name) = line.strip_prefix(':') {
             if !is_ident(name) {
-                errors.push(format!("line {}: bad label '{line}'", idx + 1));
+                errors.push(format!("line {no}: bad label '{line}'"));
             } else if !labels.insert(name.to_string()) {
-                errors.push(format!("line {}: duplicate label '{name}'", idx + 1));
+                errors.push(format!("line {no}: duplicate label '{name}'"));
             } else {
                 label_order.push(name.to_string());
             }
@@ -382,19 +382,18 @@ fn compile(source: &str) -> Result<String, Vec<String>> {
 
     let mut ctx = Ctx::new(machine);
 
-    for (idx, raw_line) in raw.iter().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
+    for (no, text) in &statements {
+        let trimmed = text.trim();
+        if let Some(name) = trimmed.strip_prefix(':') {
+            if is_ident(name) {
+                current = seg_index[name];
+            }
             continue;
         }
-        if let Some(name) = line.strip_prefix(':') {
-            current = seg_index[name];
-            continue;
-        }
-        match translate(line, &mut ctx, &labels) {
+        match translate(text, &mut ctx, &labels) {
             Ok(code) if !code.is_empty() => segments[current].push(code),
             Ok(_) => {}
-            Err(msg) => errors.push(format!("line {}: {msg}", idx + 1)),
+            Err(msg) => errors.push(format!("line {no}: {msg}")),
         }
     }
     if !errors.is_empty() {
@@ -450,20 +449,27 @@ fn compile(source: &str) -> Result<String, Vec<String>> {
     Ok(body)
 }
 
-/// eval mode: ';' separates statements when there are no newlines
-/// (';' inside string literals stays untouched)
-fn split_statements(program: &str) -> String {
-    let mut out = String::new();
-    let mut in_string = false;
-    for c in program.chars() {
-        match c {
-            '"' => {
-                in_string = !in_string;
-                out.push(c);
+/// statements are separated by newlines OR by ';'.
+/// returns (source_line_number, statement) so diagnostics stay honest;
+/// ';' inside string literals is content, not a separator.
+fn split_statements(source: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (idx, raw) in source.lines().enumerate() {
+        let mut current = String::new();
+        let mut in_string = false;
+        for c in raw.chars() {
+            match c {
+                '"' => {
+                    in_string = !in_string;
+                    current.push(c);
+                }
+                // rest of the physical line is a comment
+                '#' if !in_string => break,
+                ';' if !in_string => out.push((idx + 1, std::mem::take(&mut current))),
+                _ => current.push(c),
             }
-            ';' if !in_string => out.push('\n'),
-            _ => out.push(c),
         }
+        out.push((idx + 1, current));
     }
     out
 }
@@ -488,7 +494,7 @@ fn main() {
     // -e takes the next argument as the whole program
     let content = if let Some(pos) = args.iter().position(|a| a == "-e") {
         match args.get(pos + 1) {
-            Some(program) => split_statements(program),
+            Some(program) => program.clone(),
             None => {
                 eprintln!("terra: -e expects a program string");
                 exit(1);
@@ -786,12 +792,28 @@ mod tests {
     }
 
     #[test]
-    fn eval_mode_splits_on_semicolons_but_not_in_strings() {
-        assert_eq!(
-            split_statements("x.10; log.\"a;b\".x; q."),
-            "x.10\n log.\"a;b\".x\n q."
-        );
-        // leading spaces are fine: every line is trimmed before translation
+    fn statements_split_on_semis_comments_and_newlines() {
+        let stmts = split_statements("x.10; log.\"a;b\".x # trailing\ny.2");
+        let texts: Vec<(usize, &str)> =
+            stmts.iter().map(|(n, s)| (*n, s.as_str())).collect();
+        // ';' inside the string survives, comment cuts the rest of its line
+        assert_eq!(texts, [(1, "x.10"), (1, " log.\"a;b\".x "), (2, "y.2")]);
+    }
+
+    #[test]
+    fn whole_program_on_one_line_compiles_to_machine() {
+        let body =
+            compile("i.3; :top; log.i; i.-1; jgt.i.0.top; q.").unwrap();
+        assert!(body.contains("let mut __pc = \"@begin\";"));
+        assert!(body.contains("\"top\" => {"));
+    }
+
+    #[test]
+    fn semicolon_errors_keep_real_line_numbers() {
+        let errs = compile("x.1\nz.; log.zz\n").unwrap_err();
+        assert_eq!(errs.len(), 2);
+        assert!(errs[0].starts_with("line 2:"));
+        assert!(errs[1].starts_with("line 2:"));
     }
 
     #[test]

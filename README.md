@@ -34,6 +34,7 @@ $ cargo test                          # run the test suite
 ## grammar
 
 Every line is `<verb>.<operand>`. Comments start with `#`.
+Statements may also be joined with `;` — a whole program fits on one line.
 Values are integers (i64).
 
 | line | meaning |
