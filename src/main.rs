@@ -8,8 +8,9 @@ const GENERATED_CARGO_TOML: &str =
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const RESERVED: [&str; 14] = [
+const RESERVED: [&str; 16] = [
     "log", "in", "w", "q", "j", "jeq", "jne", "jlt", "jgt", "jle", "jge", "ask", "rnd", "cls",
+    "at", "key",
 ];
 
 const COND_OPS: [(&str, &str); 6] = [
@@ -46,17 +47,22 @@ fn const_init(rhs: &str) -> Option<String> {
 
 /// escape braces/quotes so println! doesn't eat them
 fn escape_text(text: &str) -> String {
-    text.replace('\\', "\\\\")
+    // \" means a real quote character; protect it from the generic pass
+    const ESC_Q: char = '\u{1}';
+    text.replace("\\\"", &ESC_Q.to_string())
+        .replace('\\', "\\\\")
         .replace('"', "\\\"")
+        .replace(ESC_Q, "\\\"")
         .replace('{', "{{")
         .replace('}', "}}")
 }
 
-/// translation state: which variables exist, whether we generate the
-/// flat body (linear mode) or hoist declarations for the state machine
+/// translation state: which variables exist (and of which type), whether
+/// we generate the flat body (linear mode) or hoist for the state machine
 #[derive(Clone)]
 struct Ctx {
-    declared: HashSet<String>,
+    ints: HashSet<String>,
+    strs: HashSet<String>,
     machine: bool,
     hoisted: Vec<String>,
 }
@@ -64,7 +70,8 @@ struct Ctx {
 impl Ctx {
     fn new(machine: bool) -> Self {
         Ctx {
-            declared: HashSet::new(),
+            ints: HashSet::new(),
+            strs: HashSet::new(),
             machine,
             hoisted: Vec::new(),
         }
@@ -72,7 +79,7 @@ impl Ctx {
 
     /// first mention declares (hoisted in machine mode), rest just assign
     fn bind(&mut self, name: &str, rhs: &str) -> String {
-        if self.declared.insert(name.to_string()) {
+        if self.ints.insert(name.to_string()) {
             if self.machine {
                 // with jumps, textual order no longer equals execution order,
                 // so every variable is created up front with a safe value;
@@ -80,7 +87,7 @@ impl Ctx {
                 // everything else gets assigned at the actual site
                 match const_init(rhs) {
                     Some(v) => {
-                        self.hoisted.push(format!("    let mut {name}: i64 = {v};"));
+                        self.hoisted.push(format!("    #[allow(unused_variables)]\n    let mut {name}: i64 = {v};"));
                         if v == rhs {
                             String::new()
                         } else {
@@ -93,15 +100,43 @@ impl Ctx {
                     }
                 }
             } else {
-                format!("    let mut {name}: i64 = {rhs};")
+                format!("    #[allow(unused_variables)]\n    let mut {name}: i64 = {rhs};")
             }
         } else {
             format!("    {name} = {rhs};")
         }
     }
 
-    fn require_declared(&self, name: &str) -> Result<(), String> {
-        if self.declared.contains(name) {
+    /// same contract as bind, but for string variables
+    fn bind_str(&mut self, name: &str, quoted: &str) -> String {
+        if self.strs.insert(name.to_string()) {
+            if self.machine {
+                self.hoisted
+                    .push(format!(
+                        "    #[allow(unused_variables)]\n    let mut {name}: String = String::new();"
+                    ));
+            } else {
+                return format!(
+                    "    #[allow(unused_variables)]\n    let mut {name}: String = {quoted}.to_string();"
+                );
+            }
+        }
+        format!("    {name} = {quoted}.to_string();")
+    }
+
+    fn require_int(&self, name: &str) -> Result<(), String> {
+        if self.ints.contains(name) {
+            Ok(())
+        } else if self.strs.contains(name) {
+            Err(format!("'{name}' is a string variable, a number was expected"))
+        } else {
+            Err(format!("unknown variable '{name}'"))
+        }
+    }
+
+    /// log can print either kind
+    fn require_any(&self, name: &str) -> Result<(), String> {
+        if self.ints.contains(name) || self.strs.contains(name) {
             Ok(())
         } else {
             Err(format!("unknown variable '{name}'"))
@@ -112,6 +147,11 @@ impl Ctx {
 fn translate_in(name: &str, ctx: &mut Ctx) -> Result<String, String> {
     if !is_ident(name) {
         return Err(format!("in expects a variable name, got '{name}'"));
+    }
+    if ctx.strs.contains(name) {
+        return Err(format!(
+            "'{name}' is a string variable, a number was expected"
+        ));
     }
     let reader = read_int_expr();
     Ok(ctx.bind(name, reader))
@@ -158,6 +198,11 @@ fn translate_ask(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
     if !is_ident(var) {
         return Err(format!("'{var}' is not a variable name"));
     }
+    if ctx.strs.contains(var) {
+        return Err(format!(
+            "'{var}' is a string variable, a number was expected"
+        ));
+    }
     Ok(format!(
         "    print!(\"{text}\");\n{}",
         ctx.bind(var, read_int_expr())
@@ -181,10 +226,10 @@ fn translate_log(operand: &str, ctx: &Ctx) -> Result<String, String> {
         if !is_ident(var) {
             return Err(format!("'{var}' is not a variable name"));
         }
-        ctx.require_declared(var)?;
+        ctx.require_any(var)?;
         Ok(format!(r#"    println!("{text}{{}}", {var});"#))
     } else if is_ident(operand) {
-        ctx.require_declared(operand)?;
+        ctx.require_any(operand)?;
         Ok(format!(r#"    println!("{{}}", {operand});"#))
     } else {
         Err(format!(
@@ -197,6 +242,71 @@ fn is_jump_verb(verb: &str) -> bool {
     verb == "j" || COND_OPS.iter().any(|(v, _)| *v == verb)
 }
 
+/// key.k. -> wait for one raw keypress, k gets its byte value.
+/// the terminal is restored right after the read.
+fn translate_key(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let var = operand
+        .strip_suffix('.')
+        .ok_or_else(|| "key expects '<var>.' (trailing dot), got '{operand}'".to_string())?;
+    if !is_ident(var) {
+        return Err(format!("'{var}' is not a variable name"));
+    }
+    let reader = r#"{
+        use std::io::{Read, Write};
+        std::process::Command::new("stty")
+            .args(["-F", "/dev/tty", "-icanon", "-echo"])
+            .status()
+            .ok();
+        let mut __b = [0u8; 1];
+        let __n = std::io::stdin().lock().read(&mut __b).unwrap_or(0);
+        std::process::Command::new("stty")
+            .args(["-F", "/dev/tty", "sane"])
+            .status()
+            .ok();
+        if __n == 0 {
+            eprintln!("terra: unexpected end of input");
+            std::process::exit(1);
+        }
+        std::io::stdout().flush().ok();
+        i64::from(__b[0])
+    }"#;
+    Ok(ctx.bind(var, reader))
+}
+
+/// at.3.7."text" -> move the cursor to row 3, column 7 and print text.
+/// text may contain dots; rows/columns may be integer variables.
+fn translate_at(operand: &str, ctx: &Ctx) -> Result<String, String> {
+    let bad = || format!("at expects '<row>.<col>.\"text\"', got '{operand}'");
+    let (row, rest) = operand.split_once('.').ok_or_else(bad)?;
+    let (col, quoted) = rest.split_once('.').ok_or_else(bad)?;
+    for (what, part) in [("row", row), ("column", col)] {
+        if !is_uint(part) && !is_ident(part) {
+            return Err(format!("bad {what} '{part}'"));
+        }
+        if is_ident(part) && !is_uint(part) {
+            ctx.require_int(part).map_err(|e| match e {
+                msg if msg.starts_with("unknown") => format!("unknown {what} '{part}'"),
+                msg => msg,
+            })?;
+        }
+    }
+    let text = quoted
+        .strip_prefix('"')
+        .and_then(|r| r.strip_suffix('"'))
+        .ok_or_else(bad)?;
+    let text = escape_text(text);
+    Ok(format!(r#"    print!("\x1b[{row};{col}H{text}");"#))
+}
+
+/// parse a fully-quoted string operand into its escaped rust literal
+fn quoted_literal(operand: &str, what: &str) -> Result<String, String> {
+    let inner = operand
+        .strip_prefix('"')
+        .and_then(|r| r.strip_suffix('"'))
+        .ok_or_else(|| format!("unterminated {what} string"))?;
+    Ok(format!("\"{}\"", escape_text(inner)))
+}
+
 /// rnd.x.50 -> x becomes a random whole number in 0..50.
 /// seeded from the clock nanos with an xor-shift; plenty for games.
 fn translate_rnd(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
@@ -207,6 +317,11 @@ fn translate_rnd(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
     let (var, limit) = (parts[0], parts[1]);
     if !is_ident(var) {
         return Err(format!("'{var}' is not a variable name"));
+    }
+    if ctx.strs.contains(var) {
+        return Err(format!(
+            "'{var}' is a string variable, a number was expected"
+        ));
     }
     if !is_uint(limit) {
         return Err(format!("bad limit '{limit}' (whole number expected)"));
@@ -251,11 +366,11 @@ fn translate_jump(
     if !is_ident(a) {
         return Err(format!("'{a}' is not a variable name"));
     }
-    ctx.require_declared(a)?;
+    ctx.require_int(a)?;
     let b_expr = if is_uint(b) {
         b.to_string()
     } else if is_ident(b) {
-        ctx.require_declared(b)?;
+        ctx.require_int(b)?;
         b.to_string()
     } else {
         return Err(format!("bad comparison operand '{b}' (number or variable expected)"));
@@ -300,6 +415,8 @@ fn translate(
         "in" => translate_in(operand, ctx),
         "ask" => translate_ask(operand, ctx),
         "rnd" => translate_rnd(operand, ctx),
+        "at" => translate_at(operand, ctx),
+        "key" => translate_key(operand, ctx),
         "cls" => {
             if !operand.is_empty() {
                 return Err("cls takes no operand".to_string());
@@ -358,20 +475,33 @@ fn translate(
                 if (op == "/" || op == "%") && rest == "0" {
                     return Err(format!("division by zero ({op}0)"));
                 }
-                if op == "-" && is_uint(rest) && !ctx.declared.contains(target) {
+                if op == "-" && is_uint(rest) && !ctx.ints.contains(target) {
                     return Ok(ctx.bind(target, &format!("-{rest}")));
                 }
                 let rhs = if is_uint(rest) {
                     rest.to_string()
                 } else {
-                    ctx.require_declared(rest)?;
+                    ctx.require_int(rest)?;
                     rest.to_string()
                 };
-                ctx.require_declared(target)?;
+                ctx.require_int(target)?;
                 return Ok(format!("    {target} = {target} {op} {rhs};"));
             }
+            // msg."hello" -> string variable assignment
+            if operand.starts_with('"') {
+                if ctx.ints.contains(target) {
+                    return Err(format!("'{target}' is an integer variable"));
+                }
+                let lit = quoted_literal(operand, "string")?;
+                return Ok(ctx.bind_str(target, &lit));
+            }
+            if ctx.strs.contains(target) {
+                return Err(format!(
+                    "'{target}' is a string variable, \"text\" expected"
+                ));
+            }
             if is_ident(operand) {
-                ctx.require_declared(operand)?;
+                ctx.require_int(operand)?;
                 return Ok(ctx.bind(target, operand));
             }
             Err(format!(
@@ -617,10 +747,18 @@ mod tests {
         translate(line, &mut Ctx::new(false), &HashSet::new())
     }
 
+    fn t_machine(line: &str) -> String {
+        translate(line, &mut Ctx::new(true), &HashSet::new()).unwrap()
+    }
+
+    fn compile_str(lines: &[&str]) -> Result<String, Vec<String>> {
+        compile(&lines.join("\n"))
+    }
+
     #[test]
     fn assignment_then_reassignment() {
         let mut ctx = Ctx::new(false);
-        assert_eq!(translate("x.10", &mut ctx, &HashSet::new()).unwrap(), "    let mut x: i64 = 10;");
+        assert_eq!(translate("x.10", &mut ctx, &HashSet::new()).unwrap(), "    #[allow(unused_variables)]\n    let mut x: i64 = 10;");
         assert_eq!(translate("x.20", &mut ctx, &HashSet::new()).unwrap(), "    x = 20;");
     }
 
@@ -641,7 +779,7 @@ mod tests {
 
     #[test]
     fn negative_literal_declares_when_new() {
-        assert_eq!(t("x.-5").unwrap(), "    let mut x: i64 = -5;");
+        assert_eq!(t("x.-5").unwrap(), "    #[allow(unused_variables)]\n    let mut x: i64 = -5;");
     }
 
     #[test]
@@ -731,6 +869,127 @@ mod tests {
         assert!(t("cls.5").unwrap_err().contains("takes no operand"));
     }
 
+    // ---------- strings ----------
+
+    #[test]
+    fn quoted_operand_declares_string_variable() {
+        let out = t("msg.\"hello\"").unwrap();
+        assert_eq!(out, "    #[allow(unused_variables)]\n    let mut msg: String = \"hello\".to_string();");
+        let mut ctx = Ctx::new(false);
+        translate("msg.\"a\"", &mut ctx, &HashSet::new()).unwrap();
+        let out = translate("msg.\"b\"", &mut ctx, &HashSet::new()).unwrap();
+        assert_eq!(out, "    msg = \"b\".to_string();");
+    }
+
+    #[test]
+    fn string_escapes_survive_assignment() {
+        let out = t("m.\"say \\\"hi\\\"\"").unwrap();
+        assert!(out.contains("\\\"hi\\\""), "{out}");
+    }
+
+    #[test]
+    fn log_accepts_strings_and_ints() {
+        let mut ctx = Ctx::new(false);
+        translate("msg.\"hi\"", &mut ctx, &HashSet::new()).unwrap();
+        translate("n.1", &mut ctx, &HashSet::new()).unwrap();
+        for line in ["log.msg", "log.n", "log.\"t\".msg", "log.\"t\".n"] {
+            translate(line, &mut ctx, &HashSet::new()).unwrap();
+        }
+    }
+
+    #[test]
+    fn type_mismatches_are_errors() {
+        let mut ctx = Ctx::new(false);
+        translate("msg.\"hi\"", &mut ctx, &HashSet::new()).unwrap();
+        translate("n.1", &mut ctx, &HashSet::new()).unwrap();
+        assert!(translate("n.msg", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("'msg' is a string variable"));
+        assert!(translate("n.+msg", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("'msg' is a string variable"));
+        assert!(translate("in.msg", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("'msg' is a string variable"));
+        assert!(translate("rnd.msg.5", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("'msg' is a string variable"));
+        assert!(translate("msg.n", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("'msg' is a string variable"));
+        assert!(translate("jeq.msg.\"x\".l", &mut ctx, &HashSet::new(),)
+            .unwrap_err()
+            .contains("string variable"));
+    }
+
+    #[test]
+    fn string_hoists_empty_in_machine_mode() {
+        let out = t_machine("msg.\"hi\"");
+        assert_eq!(out, "    msg = \"hi\".to_string();");
+        // and the hoisted declaration exists when jumps force machine mode
+        let prog = compile_str(&["msg.\"hi\"", "j.end", ":end", "q."]).unwrap();
+        assert!(prog.contains("let mut msg: String = String::new();"), "{prog}");
+    }
+
+    // ---------- at ----------
+
+    #[test]
+    fn at_positions_the_cursor() {
+        let out = t("at.3.7.\"X\"").unwrap();
+        assert_eq!(out, "    print!(\"\\x1b[3;7HX\");");
+
+        let mut ctx = Ctx::new(false);
+        translate("r.1", &mut ctx, &HashSet::new()).unwrap();
+        translate("c.2", &mut ctx, &HashSet::new()).unwrap();
+        let out = translate("at.r.c.\"@\"", &mut ctx, &HashSet::new()).unwrap();
+        assert_eq!(out, "    print!(\"\\x1b[r;cH@\");");
+    }
+
+    #[test]
+    fn at_text_may_contain_dots() {
+        let out = t("at.1.1.\"a.b.c\"").unwrap();
+        assert_eq!(out, "    print!(\"\\x1b[1;1Ha.b.c\");");
+    }
+
+    #[test]
+    fn at_bad_shapes_are_errors() {
+        assert!(t("at.1.1").is_err());
+        assert!(t("at.x.1.\"Y\"").unwrap_err().contains("unknown row"));
+        assert!(t("at.1.x.\"Y\"").unwrap_err().contains("unknown column"));
+        assert!(t("at.! .1.\"Y\"").unwrap_err().contains("bad row"));
+        assert!(t("at.1.1.unterminated").unwrap_err().contains("at expects"));
+        let mut ctx = Ctx::new(false);
+        translate("s.\"str\"", &mut ctx, &HashSet::new()).unwrap();
+        assert!(translate("at.s.1.\"Y\"", &mut ctx, &HashSet::new())
+            .unwrap_err()
+            .contains("string variable"));
+    }
+
+    // ---------- key ----------
+
+    #[test]
+    fn key_reads_a_single_byte_into_an_int_var() {
+        let out = t("key.k.").unwrap();
+        assert!(out.contains("let mut k: i64 = {"), "{out}");
+        assert!(out.contains("-icanon"), "{out}");
+        assert!(out.contains("i64::from(__b[0])"));
+        assert!(out.contains("\"sane\""));
+    }
+
+    #[test]
+    fn key_reuses_existing_variable() {
+        let mut ctx = Ctx::new(false);
+        translate("k.0", &mut ctx, &HashSet::new()).unwrap();
+        let out = translate("key.k.", &mut ctx, &HashSet::new()).unwrap();
+        assert!(out.starts_with("    k = "), "{out}");
+    }
+
+    #[test]
+    fn key_requires_trailing_dot() {
+        assert!(t("key.k").unwrap_err().contains("trailing dot"));
+        assert!(t("key.5.").unwrap_err().contains("not a variable name"));
+    }
+
     #[test]
     fn reader_reprompts_instead_of_panic() {
         assert!(read_int_expr().contains("a whole number, please"));
@@ -741,7 +1000,7 @@ mod tests {
     fn copy_variable() {
         let mut ctx = Ctx::new(false);
         translate("a.7", &mut ctx, &HashSet::new()).unwrap();
-        assert_eq!(translate("b.a", &mut ctx, &HashSet::new()).unwrap(), "    let mut b: i64 = a;");
+        assert_eq!(translate("b.a", &mut ctx, &HashSet::new()).unwrap(), "    #[allow(unused_variables)]\n    let mut b: i64 = a;");
     }
 
     #[test]
@@ -836,7 +1095,7 @@ mod tests {
         let mut ctx = Ctx::new(false);
         assert_eq!(
             translate("x.10 # ten", &mut ctx, &HashSet::new()).unwrap(),
-            "    let mut x: i64 = 10;"
+            "    #[allow(unused_variables)]\n    let mut x: i64 = 10;"
         );
         // '#' inside quotes is content, not a comment
         assert_eq!(

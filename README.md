@@ -43,6 +43,10 @@ Values are integers (i64).
 | `x.y` | copy another variable |
 | `x.+5` `x.-5` `x.*5` `x./5` `x.%5` | modify in place |
 | `x.+score` | the part after the sign may be a variable too |
+| `msg."text"` | string variables work too |
+| `log.msg` | print a string variable |
+| `at.row.col."text"` | move the cursor and print (rows/columns may be variables) |
+| `key.k.` | wait for one keypress; k becomes its byte code |
 | `log."text"` | print text |
 | `log.x` | print value |
 | `log."text".x` | print text followed by value |
