@@ -8,8 +8,8 @@ const GENERATED_CARGO_TOML: &str =
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const RESERVED: [&str; 11] = [
-    "log", "in", "w", "q", "j", "jeq", "jne", "jlt", "jgt", "jle", "jge",
+const RESERVED: [&str; 12] = [
+    "log", "in", "w", "q", "j", "jeq", "jne", "jlt", "jgt", "jle", "jge", "ask",
 ];
 
 const COND_OPS: [(&str, &str); 6] = [
@@ -112,12 +112,39 @@ fn translate_in(name: &str, ctx: &mut Ctx) -> Result<String, String> {
     if !is_ident(name) {
         return Err(format!("in expects a variable name, got '{name}'"));
     }
-    let reader = r#"{
+    let reader = read_int_expr();
+    Ok(ctx.bind(name, reader))
+}
+
+fn read_int_expr() -> &'static str {
+    r#"{
         let mut buf = String::new();
         std::io::stdin().read_line(&mut buf).expect("input error");
         buf.trim().parse().expect("invalid number")
-    }"#;
-    Ok(ctx.bind(name, reader))
+    }"#
+}
+
+/// ask."prompt".x — print the prompt without a newline, then read an
+/// integer into x. the python-style cousin of `in`.
+fn translate_ask(operand: &str, ctx: &mut Ctx) -> Result<String, String> {
+    let rest = operand
+        .strip_prefix('"')
+        .ok_or_else(|| "ask expects a quoted prompt, got '{operand}'".to_string())?;
+    let close = rest
+        .find('"')
+        .ok_or_else(|| "unterminated prompt string".to_string())?;
+    let text = escape_text(&rest[..close]);
+    let var = rest[close + 1..]
+        .trim()
+        .strip_prefix('.')
+        .ok_or_else(|| "ask expects '.<variable>' after the prompt".to_string())?;
+    if !is_ident(var) {
+        return Err(format!("'{var}' is not a variable name"));
+    }
+    Ok(format!(
+        "    print!(\"{text}\");\n{}",
+        ctx.bind(var, read_int_expr())
+    ))
 }
 
 fn translate_log(operand: &str, ctx: &Ctx) -> Result<String, String> {
@@ -230,6 +257,7 @@ fn translate(
     match verb {
         "log" => translate_log(operand, ctx),
         "in" => translate_in(operand, ctx),
+        "ask" => translate_ask(operand, ctx),
         "w" => {
             if !is_uint(operand) {
                 return Err(format!("w expects milliseconds, got '{operand}'"));
@@ -628,6 +656,22 @@ mod tests {
         assert!(out.contains("let mut x: i64"));
         let out = translate("in.x", &mut ctx, &HashSet::new()).unwrap();
         assert!(out.starts_with("    x = "));
+    }
+
+    #[test]
+    fn ask_prompts_without_newline_then_reads() {
+        let mut ctx = Ctx::new(false);
+        let out = translate(r##"ask."num: ".x"##, &mut ctx, &HashSet::new()).unwrap();
+        assert!(out.starts_with(r#"    print!("num: ");"#));
+        assert!(out.contains("let mut x: i64"));
+        assert!(out.contains("read_line"));
+    }
+
+    #[test]
+    fn ask_rejects_missing_variable_or_bad_string() {
+        assert!(t(r##"ask."no var""##).is_err());
+        assert!(t(r##"ask."oops"##).is_err());
+        assert!(t("ask.5").is_err());
     }
 
     #[test]

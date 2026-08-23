@@ -45,6 +45,7 @@ Values are integers (i64).
 | `log.x` | print value |
 | `log."text".x` | print text followed by value |
 | `in.x` | read an integer from stdin |
+| `ask."text".x` | print prompt without newline, then read an integer into x |
 | `w.500` | sleep 500 ms |
 | `q.` | exit |
 | `:name` | define a label |

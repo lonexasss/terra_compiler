@@ -1,8 +1,7 @@
-# guess.tr — guess the number. shows input, comparisons, branches
+# guess.tr — guess the number. shows ask, comparisons, branches
 secret.42
 :start
-log."guess the number:"
-in.guess
+ask."guess the number: ".guess
 jeq.guess.secret.win
 jlt.guess.secret.low
 log."lower..."
