@@ -195,6 +195,15 @@ whole aesthetic.
    assignment, plain assignment afterwards)
 3. generated code is written to `terra_build/` and executed via `cargo run`
 
+## related
+
+| repo | role |
+|---|---|
+| [terra-lang](https://github.com/lonexasss/terra-lang) | full language specification + landing page |
+| [terra-vscode](https://github.com/lonexasss/terra-vscode) | vs code extension: highlighting, Ctrl+Enter run |
+| [terra-games](https://github.com/lonexasss/terra-games) | games written in terra |
+| [terra-esp](https://github.com/lonexasss/terra-esp) | experimental esp32-c3 target (esp-hal, stable rust) |
+
 ---
 
 <div align="center">
